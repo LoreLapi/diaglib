@@ -11,14 +11,22 @@ program main
 !
 ! initialize:
 !
-  n      = 1000
-  n_want = 20
+  n      = 1000 
+  n_want = 20  
   tol    = 1.0e-6_dp
   itmax  = 1000
   m_max  = 20
   nmult  = 0
   tdscf  = .false.
   i_alg  = 0
+!
+  if ((m_max*n_want) .gt. n) then
+       write(6,*)
+       write(6,*) 'WARNING'
+       write(6,*) 'Rouché-Capelli is encountered, please change your parameters'
+       write(6,*)
+       stop
+  end if
 !
   call print_header
 ! 
@@ -27,9 +35,11 @@ program main
               t3,'   1 for symmetric eigenvalue problems ',/, &
               t3,'   2 for symmetric generalized eigenvalue problems ',/, &
               t3,'   3 for linear-response equations (SCF-like)',/, &
-              t3,'   4 for linear-response equations (CASSCF-like).')
+              t3,'   4 for linear-response equations (CASSCF-like).',/, &
+              t3,'   5 for standard-response equations (CASSCF-like).')
   write(6,1000)
-  read(5,*) iwhat
+!  read(5,*) iwhat
+  iwhat = 5
   write(6,*)
 !
   if (iwhat.eq.1) then 
@@ -39,9 +49,11 @@ program main
   else if (iwhat.eq.3) then 
     call test_scflr(.true.,n,n_want,tol,itmax,m_max)
   else if (iwhat.eq.4) then 
-    call test_caslr(.true.,n,n_want,tol,itmax,m_max)
+    call test_caslr(.false.,n,n_want,tol,itmax,m_max)
+  else if (iwhat.eq.5) then
+    call test_caslr_std(.true.,n,n_want,tol,itmax,m_max)  
   else 
-    write(6,*) ' invalid selectrion. aborting ...'
+    write(6,*) ' invalid selection. aborting ...'
   end if
 !
 end program main
@@ -216,8 +228,8 @@ end program main
 !
     do icol = 1, m
       do i = 1, n
-        yp(i,icol) = - 1.0d0/(aa(i,i)**2 - fac**2 * sigma(i,i)**2) * (aa(i,i) * xp(i,icol) + fac * sigma(i,i) * xm(i,icol))
-        ym(i,icol) = - 1.0d0/(aa(i,i)**2 - fac**2 * sigma(i,i)**2) * (aa(i,i) * xm(i,icol) + fac * sigma(i,i) * xp(i,icol))
+        yp(i,icol) = - (1.0d0/(aa(i,i)**2 - fac**2 * sigma(i,i)**2)) * (aa(i,i) * xp(i,icol) + fac * sigma(i,i) * xm(i,icol))
+        ym(i,icol) = - (1.0d0/(aa(i,i)**2 - fac**2 * sigma(i,i)**2)) * (aa(i,i) * xm(i,icol) + fac * sigma(i,i) * xp(i,icol))
       end do
     end do
 !
@@ -498,7 +510,7 @@ end program main
   subroutine test_caslr(check_lapack,n,n_want,tol,itmax,m_max)
     use real_precision
     use utils
-    use diaglib, only : caslr_driver, caslr_eff_driver
+    use diaglib, only : caslr_driver, caslr_eff_driver, prt_generic
     implicit none
     logical,  intent(in) :: check_lapack
     integer,  intent(in) :: n, n_want, itmax, m_max
@@ -517,9 +529,22 @@ end program main
 !
     external apbvec, ambvec, spdvec, smdvec, lrprec_1, lrprec_2
 !
+    integer :: n_seed, k
+    integer, dimension(:), allocatable :: iseed
+    integer, dimension(:), allocatable :: seed_array
+    integer :: t
     1000 format(t3,' eigenvalue # ',i6,': ',f12.6,/,t3,' eigenvector: ')
 !
 !   the actual size of the problem is 2*n:
+!
+!   Initialize seeds with current time
+    call random_seed(size = n_seed)
+    allocate(iseed(n_seed))
+!!    call system_clock(t)
+!!    iseed = t + (/(k, k = 0, n_seed-1)/)
+    iseed = 10   
+    call random_seed(put = iseed)
+    deallocate(iseed)
 !
     n2 = 2 * n
 !
@@ -544,7 +569,10 @@ end program main
       end do 
     end do
 !  
-    call random_number(sigma)
+!    call random_number(sigma)
+!    print *, "SIGMA"
+!    call prt_generic(n,n,n,n,sigma,2)
+!!    
     delta = matmul(transpose(sigma),sigma)
     sigma = delta
     do i = 1, n
@@ -555,7 +583,9 @@ end program main
 !  
     call random_number(delta)
     delta = delta - transpose(delta)
-!  
+!
+!    print *, "DELTA"
+!    call prt_generic(n,n,n,n,delta,2)
 !   build a and b:
 !  
     aa = 0.5_dp * (apb + amb)
@@ -699,6 +729,215 @@ end program main
     return
   end subroutine test_caslr
 !
+  subroutine test_caslr_std(check_lapack,n,n_want,tol,itmax,m_max)
+    use real_precision
+    use utils
+    use diaglib, only : caslr_std, caslr_eff_std, prt_generic
+    implicit none
+    logical,  intent(in) :: check_lapack
+    integer,  intent(in) :: n, n_want, itmax, m_max
+    real(dp), intent(in) :: tol
+!
+!   this subroutine builds a set of linear equations for a real symmetric matrix,  such as the one encountered
+!   in casscf linear response theory, and then uses lapack and iterative routines to
+!   solve it.
+!
+    logical               :: ok, imag, verbose
+    integer               :: i, j, info
+    integer               :: n2, n_eig
+    real(dp), allocatable :: ipiv(:) 
+    real(dp)              :: omega
+    real(dp)              :: sqrttwo, lw(1)
+    real(dp)              :: zero = 0.0d0
+    real(dp), allocatable :: vec(:,:), diagonal(:), eig(:), g(:,:), g_half(:,:)
+!
+    external apbvec, ambvec, spdvec, smdvec, lrprec_1, lrprec_2
+!
+    integer :: n_seed, k
+    integer, dimension(:), allocatable :: iseed
+    integer, dimension(:), allocatable :: seed_array
+    integer :: t
+!
+!   set a couple of logicals
+!
+    verbose = .true.
+    imag    = .false.
+!
+!   Initialize seeds with current time
+    call random_seed(size = n_seed)
+    allocate(iseed(n_seed))
+    call system_clock(t)
+    iseed = t + (/(k, k = 0, n_seed-1)/)
+!    iseed = 10   
+    call random_seed(put = iseed)
+    deallocate(iseed)
+!
+!   the actual size of the problem is 2*n:
+!
+    n2 = 2 * n
+!
+!   enter the value of omega
+!
+    omega = 1.0_dp
+!
+!   allocate memory for the a, b, apb, amb, sigma, delta, spd, smd and  g matrices:
+!
+    allocate (aa(n,n), bb(n,n), apb(n,n), amb(n,n), sigma(n,n), delta(n,n), spd(n,n), smd(n,n), &
+             g(n2,n_want), g_half(n,n_want))
+!    
+!   build a positive definite, symmetric apb, amb, sigma matrices:
+!  
+    do i = 1, n
+      apb(i,i) = 5.0_dp + real(i,kind=dp)
+      do j = 1, i - 1
+        apb(j,i) = 1.0_dp/real(i+j,kind=dp)
+        apb(i,j) = apb(j,i)
+      end do 
+    end do
+    do i = 1, n
+      amb(i,i) = 2.0_dp + dble(i)
+      do j = 1, i - 1
+        apb(j,i) = 0.2_dp/dble(i+j)
+        apb(i,j) = apb(j,i)
+      end do 
+    end do
+    delta = matmul(transpose(sigma),sigma)
+    sigma = delta
+    do i = 1, n
+      sigma(i,i) = sigma(i,i) + 1.0_dp
+    end do
+!  
+!   build antisymmetric delta:
+!  
+    call random_number(delta)
+    delta = delta - transpose(delta)
+!
+    aa = 0.5_dp * (apb + amb)
+    bb = 0.5_dp * (apb - amb)
+!  
+!   build sigma + delta and sigma - delta
+!  
+    spd = sigma + delta
+    smd = sigma - delta
+! 
+!   make a distinction between a real and an imaginary perturbation for the costrunction of the gradient vector
+!
+    if (imag) then
+      call random_number(g(1:n,:))
+      g(n+1:n2,:) = -g(1:n,:) 
+    else
+      call random_number(g(1:n,:))
+      g(n+1:n2,:) = g(1:n,:)
+    end if
+    g_half(1:n,:) = g(1:n,:)
+!
+!   allocate space for dgesv
+    if (check_lapack) then
+!
+!     build the complete matrices:
+!    
+      allocate (a(n2,n2), s(n2,n2))
+!
+      a(1:n,   1:n)    =    aa
+      a(n+1:n2,n+1:n2) =    aa
+      a(1:n,   n+1:n2) =    bb
+      a(n+1:n2,1:n)    =    bb
+      s(1:n,   1:n)    =   sigma
+      s(n+1:n2,n+1:n2) = - sigma
+      s(1:n,   n+1:n2) =   delta
+      s(n+1:n2,1:n)    = - delta
+!
+!   multiply directly omega to s
+!
+    s = omega * s
+!
+!   compute a-s
+!
+    a = a - s
+!
+    allocate(ipiv(n2))
+!    
+!   solve the linear response equation system using a dense linear algebra routine 
+!
+    call dgesv(n2,n_want,a,n2,ipiv,g,n2,info)
+    deallocate(ipiv)
+!
+!   verify the result
+! 
+    open (unit = 10, file = 'test_caslr_std.txt', form = 'formatted', access = 'sequential')
+    do i = 1, n2
+      write(10,'(10f12.6)') g(i,:)
+      write(10,*)
+    end do
+    close (10)
+!
+!     free the memory:
+      deallocate(a,s)
+    end if
+      deallocate (g)
+!
+!   allocate space for the diagonal:
+!
+    allocate (diagonal(n))
+!
+!   gather diag(a) - diag(sigma):
+!
+    do i = 1, n
+      diagonal(i) = aa(i,i) - sigma(i,i)
+    end do
+!
+!   for better convergence, we seek more eigenpairs and stop the iterations when the
+!   required ones are converged.
+!
+    n_eig = n_want
+!
+!   allocate memory for the solution vectors:
+!
+    allocate (vec(n2,n_eig))
+!
+!   make a guess for the solution vector (see guess_evec for more information)
+!
+    vec = 0.0d0
+!    call guess_evec(3,n2,n_eig,diagonal,vec)
+!
+!   call the traditional solver:
+!
+!    write(6,*) ' traditional implementation'
+!    write(6,*)
+!    call caslr_std(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
+!                      spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
+
+!   write the converged results on file for comparison:
+!
+!    open (unit = 20, file = 'caslr_std.txt', status = 'replace', form = 'formatted', access = 'sequential')
+!    do i = 1, n2
+!      write(20,'(10f12.6)') vec(i,:)
+!      write(20,*)
+!    end do
+!    close (20)
+!
+!   make a guess for the solution vector (see guess_evec for more information)
+!
+    call guess_evec(1,n2,n_eig,diagonal,vec)
+!
+!   call the modified solver:
+!
+    write(6,*) ' new implementation'
+    write(6,*)
+    call caslr_eff_std(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
+                          spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
+!
+!   write the converged results on file for comparison:
+!
+    open (unit = 70, file = 'caslr_eff_std.txt', form = 'formatted', access = 'sequential')
+    do i = 1, n2
+      write(70,'(10f12.6)')  vec(i,:)
+      write(70,*)
+    end do
+    close (70)
+    return
+  end subroutine test_caslr_std
+!  
   subroutine test_scflr(check_lapack,n,n_want,tol,itmax,m_max)
     use real_precision
     use utils
@@ -886,7 +1125,7 @@ end program main
 !
 !   guess the eigenvector.
 !
-    integer              :: i, ipos, n_seed
+    integer              :: i, ipos, n_seed, k, t
     integer, allocatable :: iseed(:)
     logical, allocatable :: mask(:)
 !
@@ -895,6 +1134,8 @@ end program main
     call random_seed(size=n_seed)
     allocate (iseed(n_seed))
     iseed = 1
+!    call system_clock(t)
+!    iseed = t + (/(k, k = 0, n_seed-1)/)
     call random_seed(put=iseed)
     deallocate (iseed)
 !
@@ -963,12 +1204,3 @@ end program main
     end if
     return
   end subroutine guess_evec
-
-
-
-
-
-
-
-
-
