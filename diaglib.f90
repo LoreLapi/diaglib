@@ -1433,7 +1433,7 @@ module diaglib
   subroutine caslr_eff_std(verbose,n,n2,n_targ,n_max,max_iter,tol,max_dav, &
                            apbmul,ambmul,spdmul,smdmul,lrprec,vec,ok,omega,g_half,imag)
 !
-!   main driver for the efficient solution to the following standard response equation:
+!   Main driver for the efficient solution to the following standard response equation:
 !
 !   / A  B \ / Y \     /  S  D \ / Y \   /  Q  \
 !   |      | |   | - w |       | |   | = |     |
@@ -1529,105 +1529,101 @@ module diaglib
 !   local variables:
 !   ================
 !
-!   min_dav : integer, minimum acceptable dimension of the expansion subspace.
+!   min_dav: integer, minimum acceptable dimension of the expansion subspace.
+!
+!   istat: integer, used as the value of the parameter "stat" to manage
+!          allocation errors.
+!    
+!   dim_dav: integer, actual expansion space size.
+!
+!   lda,lda2: integers, total dimension of the expansion arrays.
+! 
+!   n_act, ind, i_beg: integers, number of active vectors at a given iteration, 
+!                      and indices to access them.
+!
+!   n_p, n_m: integers, number of non-dropped vectors in the "symmetric"
+!             and "antisymmetric" subspaces.
+!
+!   m_dim, ldu: integers, respectively the current Davidson iteration and
+!               the current dimension.
+!
+!   n_frozen: integer, number of frozen (i.e. converged) vectors.
+!
+!   n_drop: integer, number of dropped expansion vectors.
+!    
+!   it, i_std: integers, used for loops.
+!
+!   sqrtn: double precision real, used to compute rms norms, coupled 
+!          with the intrinsic function "real".
+!
+!   tol_rms, tol_max: double precision reals, set to tol and 10*tol, respectively;
+!                     used to check convergence.
+!
+!   done: array of logicals used to control convergence 
+!         and orthogonalization.
+!
+!   vp, vm: real double precision arrays, the symmetric (v+) and 
+!           antisymmetric (v-) expansion spaces, respectively.
+!
+!   lvp, lvm: real double precision arrays, obtained by applying (A+B) to vp
+!             and (A-B) to vm, respectively.
+!
+!   bvp, bvm: real double precision arrays, obtained by applying (S+D)
+!             to vp and (S-D) to vm. 
+! 
+!   rp, rm, r_norm: real double precision arrays: the symmetric (rp), antisymmetric
+!                   (rm) residuals and their overall norm.
+!
+!   um: real double precision array, containing the antisymmetric 
+!       coefficients of the Ritz vector, obtained by solving 
+!       the reduced problem.
+!
+!   bp, bm: real double precision arrays, obtained by matrix-matrix 
+!           multiplication of bvp and vm in the first case, bvm 
+!           and vp in the second.
+!
+!   vecp, vecm: real double precision arrays, the symmetric and antisymmetric
+!               components of the Ritz vector. They are the solutions of the 
+!               matrix-matrix products vp and up, vm and um, respectively.
+!
+!   smat: real double precision array, S. Obtained by applying 
+!         (vm^T) to bvm. It occupies the top right and the bottom left
+!         positions in the reduced problem's matrix.
+!
+!   ss_mat: real double precision array, the identity matrix minus 
+!           (w^2)*(s^t)s, where w is omega.
+!
+!   gp,gm: real double precision arrays, the subspace gradient vectors; 
+!          gp and gm are the projections of the gradient in the symmetric
+!          and antisymmetric subspaces, respectively.
+!
+!   s_up,s_gm: real double precision arrays, used to construct the 
+!              coefficients up and um; s_up is obtained by applying s to s_gm 
+!              which is initially w*s^t gm + gp, then takes the role of the 
+!              symmetric up coefficients, once the reduced linear system
+!              has been solved. 
+!
+!   restart: logical, gives Davidson' routine a restart order. It's set to
+!            true when m_dim is equal to m_max.
+!
+!   cnt: integer, used to count every time the program enters a 
+!        particular loop.
 !
     integer, parameter    :: min_dav = 10
-!    
-!   istat   : integer, used as the value of the parameter "stat" to manage allocation errors.
-! 
     integer               :: istat
-!
-!   dim_dav  : integer, actual expansion space size.
-!
-!   lda,lda2 : integers, total dimension of the expansion arrays.
-!
     integer               :: dim_dav, lda, lda2
-!
-!   n_act, ind, i_beg : integers, number of active vectors at a given iteration, 
-!                       and indices to access them.
-!
-!   n_p, n_m : integers, number of non-dropped vectors in the "symmetric"
-!              and "antisymmetric" subspaces.
-!
     integer               :: n_act, ind, i_beg, n_p, n_m
-!
-!   m_dim, ldu : integers, respectively the current Davidson iteration and
-!                the current dimension.
-!
     integer               :: m_dim, ldu
-!
-!   n_frozen : integer, number of frozen (i.e. converged) vectors.
-!    
-    integer               :: n_frozen
-!
-!   it, i_std : integers, used for loops.
-!
+    integer               :: n_frozen, n_drop
     integer               :: it, i_std
-!
-!   sqrtn : double precision real, used to compute rms norms with the intrinsic function
-!           real.
-!
-!   tol_rms, tol_max : double precision reals, set to tol and 10*tol, respectively; used 
-!                      to check convergence.
-!
     real(dp)              :: sqrtn, tol_rms, tol_max
-!
-!   done : array of logicals used to control convergence and orthogonalization.
-!
     logical,  allocatable :: done(:)
-!
-!   vp, vm : real double precision arrays, the symmetric (v+) and 
-!            antisymmetric (v-) expansion spaces, respectively.
-!
-!   lvp, lvm : real double precision arrays, obtained by applying (A+B) to vp
-!              and (A-B) to vm, respectively.
-!
-!   bvp, bvm : real double precision arrays, obtained by applying (S+D)
-!              to vp and (S-D) to vm. 
-! 
     real(dp), allocatable :: vp(:,:), vm(:,:), lvp(:,:), lvm(:,:), bvp(:,:), bvm(:,:)
-!
-!   rp, rm, rr, r_norm: real double precision arrays: the symmetric (rp), antisymmetric (rm)
-!                       residuals and their norm.
-!
     real(dp), allocatable :: rp(:,:), rm(:,:), r_norm(:,:)
-!
-!   um : real double precision array, containing the antisymmetric coefficients of the Ritz vector, 
-!        obtained by solving the reduced problem.
-!
-!   bp, bm : real double precision arrays, obtained by matrix-matrix multiplication of bvp and vm
-!             in the first case, bvm and vp in the second.
-!
-!   vecp, vecm : real double precision arrays, the symmetric and antisymmetric components of the Ritz 
-!                vector. They are the solutions of the matrix-matrix products vp and up, vm and um,
-!                respectively.
-!
     real(dp), allocatable :: um(:,:), bp(:,:), bm(:,:), vecp(:,:), vecm(:,:)
-!
-!   smat : real double precision array, S. Obtained by applying (vm^T) to bvm. It occupies the top
-!          right and the bottom left positions in the reduced problem's matrix.
-!
-!   ss_mat : real double precision array, the identity matrix minus(w^2)*(s^t)s, where w is omega.
-!
     real(dp), allocatable :: smat(:,:), ss_mat(:,:)
-!
-!   gp,gm : real double precision arrays, the subspace gradient vectors; gp and gm are the projections
-!               of the gradient in the symmetric and antisymmetric subspaces, respectively.
-!
     real(dp), allocatable :: gp(:,:), gm(:,:)
-!
-!   s_up,s_gm : real double precision arrays, used to construct the coefficients up and um.
-!               s_up is obtained by applying s to s_gm (up); s_gm is initially w*s^t gm + gp, then
-!               takes the role of the symmetric up coefficients, once the reduced linear system
-!               has been solved. 
-!
     real(dp), allocatable :: s_up(:,:), s_gm(:,:)
-!
-!   restart : logical, gives Davidson' routine a restart order. It's set to true when m_dim is equal to 
-!             m_max.
-!
-!   cnt : integer, used to count every time the program enters a particular loop.
-!
     logical               :: restart
     integer               :: cnt
 !
@@ -1638,6 +1634,7 @@ module diaglib
     external              :: dcopy, dnrm2, dgesv, dgetri, dgetrfi, dgemv
 !
 !   External arrays and integers used for Lapacks.
+!   ==============================================
 !
     integer               :: info
     real(dp), allocatable :: ipiv(:)
@@ -1748,10 +1745,11 @@ module diaglib
 !
 !   Initialize the counter for the expansion of the subspace
 !
-    m_dim = 1
-    ldu   = 0
-    n_p   = 0
-    n_m   = 0
+    m_dim  = 1
+    ldu    = 0
+    n_p    = 0
+    n_m    = 0
+    n_drop = 0
 !
 !   Initialize to false the restart.
 !
@@ -1780,77 +1778,60 @@ module diaglib
       call smdmul(n,n_act,vm(1,i_beg),bvp(1,i_beg))
       call get_time(t2)
       t_mv = t_mv + t2 - t1
-!     call prt_generic(n,ldu,n,lda,bvm,1,'bvm')
 !
 !     Update the reduced matrix smat (s). 
 !
       smat = zero
       call dgemm('t','n',ldu,ldu,n,one,vm,n,bvm,n,zero,smat,lda)
 !
-!     call prt_generic(ldu,ldu,lda,lda,smat,1,'smat')
 !     Because of the symmetry of g and whether the perturbation is complex 
 !     or real, discriminate between gp = 0 or gm = 0, respectively.
 !
       gp = zero
       gm = zero
       cnt = 0
-!      print *, "imag =", imag
       if (imag) then
         do i_std = 1, n_max
           if (done(i_std)) cycle
           cnt = cnt + 1
-          call dgemv('t',ldu,n,one,vm,n,g_half(:,i_std),1,zero,gm(:,cnt),1)
-!          call dgemm('t','n',ldu,n_max,n,one,vm,n,g_half,n,zero,gm,lda)
+          call dgemv('t',n,ldu,one,vm,n,g_half(:,i_std),1,zero,gm(:,cnt),1)
         end do
       else
         do i_std = 1, n_max
           if (done(i_std)) cycle
           cnt = cnt + 1
           call dgemv('t',n,ldu,one,vp,n,g_half(:,i_std),1,zero,gp(:,cnt),1)
-!          call dgemm('t','n',ldu,n_act,n,one,vp,n,g_half,n,zero,gp,lda)
         end do
       end if
-!     call prt_generic(ldu,n_max,lda,n_max,gp,1,'gp')
-!     call prt_generic(ldu,n_max,lda,n_max,gm,1,'gm')
-!      stop
-!
+!      
 !     Assemble Id - (w^2)s^t s = ss_mat.
 !
       ss_mat = zero
       call dgemm('t','n',ldu,ldu,ldu,-omega**2,smat,lda,smat,lda,zero,ss_mat,lda)
-!     call prt_generic(ldu,ldu,lda,lda,ss_mat,1,'ss_mat')
       do i_std = 1, ldu
         ss_mat(i_std,i_std) = ss_mat(i_std,i_std) + 1.d0
       end do
-     
-!     call prt_generic(ldu,ldu,lda,lda,ss_mat,1,'ss_mat')
-!      pause
 !
 !     Assemble w*s^t gm + gp = s_gm.
 !
       s_gm = zero
       if (imag) then
-      call dgemm('t','n',ldu,n_act,ldu,one,smat,lda,gm,lda,zero,s_gm,lda)
+      call dgemm('t','n',ldu,n_act,ldu,omega,smat,lda,gm,lda,zero,s_gm,lda)
       end if
       s_gm(:,1:n_act) = s_gm(:,1:n_act) + gp(:,1:n_act)
-!     call prt_generic(ldu,ldu,lda,lda,s_gm,1,'s_gm')
 !
 !     Solve the reduced linear system: up = (1 - w^2 s^t s)^(-1) * (gp + w s^t gm).
 !     The routine dgesv collects the solutions, the up coefficients, in s_gm.
 !
       call get_time(t1)
       call dgesv(ldu,n_act,ss_mat,lda,ipiv,s_gm,lda,info)
-!     call dgesv(ldu,cnt,ss_mat,lda,ipiv,s_gm,lda,info)
-!     call prt_generic(ldu,ldu,lda,lda,s_gm,1,'up')
       call get_time(t2)
       t_ls = t_ls + t2 - t1
 !
 !     Assemble (s)s_gm = s_up.
 !
       s_up = zero
-!     call dgemm('n','n',ldu,cnt,ldu,one,smat,lda,s_gm,lda,zero,s_up,lda)
       call dgemm('n','n',ldu,n_act,ldu,one,smat,lda,s_gm,lda,zero,s_up,lda)
-!     call prt_generic(ldu,n_act,lda,n_max,s_up,1,'s_up')
 !
 !     Build um = w*s_up + gm.
 !
@@ -1858,18 +1839,13 @@ module diaglib
       do i_std = 1, n_act
         um(:,i_std) = gm(:,i_std) + (omega * s_up(:,i_std))
       end do
-!     call prt_generic(ldu,ldu,lda,lda,um,1,'um')
 !
 !     Assemble the symmetric (vecp) and antysimmetric (vecm) vectors 
 !     as (vp)s_gm and (vm)um, respectively: the solution vectors are
 !     the sum of these quantities.
 !
       call dgemm('n','n',n,n_act,ldu,one,vp,n,s_gm,lda,zero,vecp,n)
-!        call dgemv('n',n,ldu,one,vp,n,s_gm(:,cnt),1,zero,vecp(:,cnt),1)
-!     call prt_generic(n,n_max,n,n_max,vecp,1,'vecp')
       call dgemm('n','n',n,n_act,ldu,one,vm,n,um,lda,zero,vecm,n)
-!     call prt_generic(n,n_max,n,n_max,vecm,1,'vecm')
-!        call dgemv('n',n,ldu,one,vm,n,um(:,cnt),1,zero,vecm(:,cnt),1)
 !
 !     Assemble this iteration's Ritz vectors.
 !
@@ -1880,7 +1856,6 @@ module diaglib
         vec(1:n,i_std)    = vecp(:,cnt) + vecm(:,cnt)
         vec(n+1:n2,i_std) = vecp(:,cnt) - vecm(:,cnt)
       end do
-!     call prt_generic(n,n_max,n,n_max,vec,1,'vec')
 !
 !     Begin the costruction of the symmetric and antisymmetric residuals,
 !     defined respectively as:
@@ -1891,18 +1866,10 @@ module diaglib
         if (done(i_std)) cycle
         cnt = cnt + 1
         call dgemv('n',n,ldu,one,lvp,n,s_gm(:,cnt),1,zero,rp(:,i_std),1)
-!        call dgemm('n','n',n,n_act,ldu,one,lvp,n,s_gm,lda,zero,rp,n)
         call dgemv('n',n,ldu,one,lvm,n,um(:,cnt),1,zero,rm(:,i_std),1)
-!        call dgemm('n','n',n,n_act,ldu,one,lvm,n,um,lda,zero,rm,n)
         call dgemv('n',n,ldu,one,bvp,n,um(:,cnt),1,zero,bp(:,i_std),1)
-!        call dgemm('n','n',n,n_act,ldu,one,bvp,n,um,lda,zero,bp,n)
         call dgemv('n',n,ldu,one,bvm,n,s_gm(:,cnt),1,zero,bm(:,i_std),1)
-!        call dgemm('n','n',n,n_act,ldu,one,bvm,n,s_gm,lda,zero,bm,n)
       end do
-!     call prt_generic(n,n_max,n,n_max,rp,1,'rp')
-!     call prt_generic(n,n_max,n,n_max,rm,1,'rm')
-!     call prt_generic(n,n_max,n,n_max,bp,1,'bp')
-!     call prt_generic(n,n_max,n,n_max,bm,1,'bm')
 !
 !     The construction of the residuals is again influenced by the type of perturbation.
 !     If complex, rm contains the contribution of the gradient. Else, it is rp that 
@@ -1919,8 +1886,6 @@ module diaglib
           rp(:,i_std) = rp(:,i_std) - g_half(:,i_std)
           end do
       end if
-!     call prt_generic(n,n_max,n,n_max,rp,1,'rp')
-!     call prt_generic(n,n_max,n,n_max,rm,1,'rm')
 !     
 !     Complete the construction of the residuals. If some vectors have already converged,
 !     the corresponding residual won't be built. The corresponding dnrm norm and max norm
@@ -1931,13 +1896,9 @@ module diaglib
 !
          call daxpy(n,-omega,bp(:,i_std),1,rp(:,i_std),1)
          call daxpy(n,-omega,bm(:,i_std),1,rm(:,i_std),1)
-         rp(:,i_std) = rp(:,i_std) + 1d0/exp(dble(i_std+it))
-         rm(:,i_std) = rm(:,i_std) + 1d0/exp(dble(i_std+it))
          r_norm(1,i_std) = (dnrm2(n,rp(:,i_std),1) + dnrm2(n,rm(:,i_std),1))/(sqrt(two)*sqrtn)
          r_norm(2,i_std) = (maxval(abs(rp(:,i_std))) + maxval(abs(rm(:,i_std))))/(sqrt(two))
        end do
-!     call prt_generic(n,n_max,n,n_max,rp,1,'rp')
-!     call prt_generic(n,n_max,n,n_max,rm,1,'rm')
 !
 !     Check convergence by checking the norms. Sets to true the logical done in the position 
 !     which corresponds to the converged vectors, in order to skip this check on the next
@@ -1949,8 +1910,6 @@ module diaglib
                           r_norm(2,i_std).lt.tol_max .and. &
                           it.gt.1
       end do
-!      print *, "pause"
-!      read(*,*) 
 !
 !     Print some information.
 !
@@ -1960,7 +1919,6 @@ module diaglib
         end do
         write(6,*) 
       end if
-!      if (it.eq.3) stop
 !
 !     If all vectors have converged, set ok to true and exit.
 !
@@ -1975,7 +1933,7 @@ module diaglib
 !
         m_dim = m_dim + 1
         i_beg = i_beg + n_act
-        n_act = n_max
+        n_act = n_max 
 !
 !       Update the number of frozen vectors. If there are, n_act is modified, so
 !       that no more operations will include them.
@@ -1997,34 +1955,32 @@ module diaglib
 !
         call lrprec(n,n_act,omega,rp(1,ind),rm(1,ind),vp(1,i_beg),vm(1,i_beg))
 !
-!       B-orthogonalize the new vectors to the existing ones and then
-!       orthonormalize them. 
+!       B-orthogonalize the new vectors to the existing ones, with respect to
+!       the metric, then orthonormalize them.
 !
-!        n_p = n_act
-!        n_m = n_act
+        n_drop = 0
+        n_p    = n_act
+        n_m    = n_act
         call get_time(t1)
-!        call b_ortho_vs_x(n,ldu,n_p,vp,lvp,vp(1,i_beg),dropping=.true.)
-        call b_ortho_vs_x(n,ldu,n_act,vp,lvp,vp(1,i_beg))
+        call b_ortho_vs_x(n,ldu,n_p,vp,lvp,vp(1,i_beg),dropping=.true.,tol_o=tol)
         call get_time(t2)
         t_ortho = t_ortho + t2 - t1
 !
         call get_time(t1)
-        call apbmul(n,n_act,vp(1,i_beg),lvp(1,i_beg))
+        call apbmul(n,n_p,vp(1,i_beg),lvp(1,i_beg))
         call get_time(t2)
         t_mv = t_mv + t2 - t1
         call get_time(t1)
-!        print *, n_act
-        call b_ortho(n,n_act,vp(1,i_beg),lvp(1,i_beg))
-!        n_act = n_max
-!        call b_ortho_vs_x(n,ldu,n_m,vm,lvm,vm(1,i_beg),dropping=.true.)
-        call b_ortho_vs_x(n,ldu,n_act,vm,lvm,vm(1,i_beg))
+        call b_ortho(n,n_p,vp(1,i_beg),lvp(1,i_beg))
+        call b_ortho_vs_x(n,ldu,n_m,vm,lvm,vm(1,i_beg),dropping=.true.,tol_o=tol)
         call get_time(t2)
         t_ortho = t_ortho + t2 - t1
 !
 !       Set n_act equal to the smaller of the numbers n_p and n_m, in order
 !       to eventually keep the dimension of the two spaces equal.
 !
-!        n_act = min(n_p,n_m)
+        n_drop = n_act - min(n_p,n_m)
+        n_act  = min(n_p,n_m)
 !
         call get_time(t1)
         call ambmul(n,n_act,vm(1,i_beg),lvm(1,i_beg))
@@ -2046,14 +2002,22 @@ module diaglib
         ldu   = 0
         i_beg = 1
         m_dim = 1
-!        
-!        n_act = n_max
-        vp = zero
-        vm = zero
+!
+        n_frozen = 0
+        do i_std = 1, n_max
+          if (done(i_std)) then
+            n_act = n_act - 1
+            n_frozen = n_frozen + 1
+          end if
+        end do
+        n_act = n_max - n_frozen
+        print *, "n_act=", n_act
 !
 !       Put the current solution vectors into the first position of the 
 !       expansion spaces.
 !
+        vp = zero
+        vm = zero
         cnt = 0
         do i_std = 1, n_max
           if(done(i_std)) cycle
@@ -2090,6 +2054,7 @@ module diaglib
         gm       = zero
         s_up     = zero
         s_gm     = zero
+        n_drop   = 0
 !
       end if
 !      
@@ -3588,7 +3553,6 @@ module diaglib
 !   get memory for the metric.
 !
     allocate (metric(m,m), msave(m,m))
-!   Nel caso togli metric    
     metric = zero
     macro_done = .false.
 !
@@ -3849,7 +3813,7 @@ module diaglib
     return
   end subroutine ortho_vs_x
 !
-  subroutine b_ortho_vs_x(n,m,k,x,bx,u,dropping)
+  subroutine b_ortho_vs_x(n,m,k,x,bx,u,dropping,tol_o)
     implicit none
 !
 !   given two sets x(n,m) and u(n,k) of vectors, where x 
@@ -3866,16 +3830,17 @@ module diaglib
 !
     integer,                   intent(in)    :: n, m
     integer,                   intent(inout) :: k 
-    real(dp),  dimension(n,m), intent(in)    :: x, bx
-    real(dp),  dimension(n,k), intent(inout) :: u
-    logical,   optional,       intent(in)    :: dropping
+    real(dp), dimension(n,m),  intent(in)    :: x, bx
+    real(dp), dimension(n,k),  intent(inout) :: u
+    logical,  optional,        intent(in)    :: dropping
+    real(dp), optional,        intent(in)    :: tol_o
 !
 !   local variables:
 !   ================
 !
     logical                :: done, ok
     integer                :: it, i, j 
-    real(dp)               :: xu_norm, growth, xx(1), tol_ovx, u_norm
+    real(dp)               :: xu_norm, growth, xx(1), u_norm
     real(dp),  allocatable :: xu(:,:)
 !
 !   external functions:
@@ -3893,7 +3858,7 @@ module diaglib
     ok = .false.
     allocate (xu(m,k))
     done = .false.
-    it   = 0
+    it = 0
 !
 !   start with an initial orthogonalization to improve conditioning.
 !
@@ -3913,9 +3878,9 @@ module diaglib
       call dgemm('n','n',n,k,m,-one,x,n,xu,m,one,u,n)
 !
 !     perform the vector drop
-!
+!     
       if (present(dropping)) then
-        call vector_drop(u,n,k)  
+        call vector_drop(u,n,k,tol_o)  
       end if
 !
 !     now, orthonormalize u.
@@ -4200,9 +4165,9 @@ module diaglib
     return
   end subroutine get_time
 !
- subroutine vector_drop(u,n,k)
+ subroutine vector_drop(u,n,k,tol_o)
    implicit none
-
+!
 !  checks a vector norm and, based on a set tolerance, keeps or drops
 !  the said vector. A logical is defined to keep track of the dropped
 !  vector's positions.
@@ -4210,16 +4175,18 @@ module diaglib
 !  imput variables:
 !  ================
 !
-   integer, intent(inout)                  :: k
-   integer, intent(in)                     :: n
-   real(dp), dimension(n,k), intent(inout) :: u
+   integer,  intent(inout)                  :: k
+   integer,  intent(in)                     :: n
+   real(dp), dimension(n,k), intent(inout)  :: u
+   real(dp), optional, intent(in)           :: tol_o
 !
 !  local variables:
 !  ================
 !
-   real(dp)                                :: u_norm, dnrm2, tol_norm
+   real(dp)                                :: u_norm, dnrm2, tol_drop
    integer                                 :: i, j
    integer                                 :: n_drop
+   logical                                 :: restart
 !
 !  external functions:
 !  ===================
@@ -4229,21 +4196,38 @@ module diaglib
 !  initialize the integer that keeps track
 !  of the number of vectors removed:
 !
-   tol_norm = 1.0e-14_dp
-   n_drop   = zero
+   tol_drop = min(tol_o*1.0e-2_dp,1.0e-8_dp)
+   n_drop   = 0
+! 
+!  set the restart logical to false. If true,
+!  the routine will restart with a different
+!  tolerance.
+!
+   restart = .false.
 !
 !  check vector norms and decide whether to drop 
 !  them or not:
-!
+! 
    u_norm = 0.0_dp
-   do j = 1, k
-     u_norm = dnrm2(n,u(:,j-n_drop),1) 
-       if (u_norm .lt. tol_norm) then
+   do
+     do j = 1, k
+       if (restart) then
+         restart = .false.
+         exit
+       end if
+       u_norm = dnrm2(n,u(:,j-n_drop),1) 
+       if (u_norm .lt. tol_drop .and.(k-n_drop).gt.1) then
          u(:,j-n_drop) = u(:,k-n_drop)
          n_drop = n_drop + 1
-       end if
+       else if (u_norm .lt. tol_drop .and.(k-n_drop).eq.1) then
+         restart  = .true.
+         exit
+       end if   
+     end do
+     if(.not.restart) exit
    end do
    k = k - n_drop
+   print*, "n_drop=", n_drop
 !
   end subroutine vector_drop  
 end module diaglib

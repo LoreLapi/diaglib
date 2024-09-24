@@ -12,10 +12,10 @@ program main
 ! initialize:
 !
   n      = 1000 
-  n_want = 20  
-  tol    = 1.0e-6_dp
+  n_want = 3  
+  tol    = 1.0e-10_dp
   itmax  = 1000
-  m_max  = 20
+  m_max  = 10
   nmult  = 0
   tdscf  = .false.
   i_alg  = 0
@@ -761,7 +761,7 @@ end program main
 !   set a couple of logicals
 !
     verbose = .true.
-    imag    = .false.
+    imag    = .true.
 !
 !   Initialize seeds with current time
     call random_seed(size = n_seed)
@@ -778,7 +778,7 @@ end program main
 !
 !   enter the value of omega
 !
-    omega = 1.0_dp
+    omega = 0.1_dp
 !
 !   allocate memory for the a, b, apb, amb, sigma, delta, spd, smd and  g matrices:
 !
@@ -900,15 +900,15 @@ end program main
     vec = 0.0d0
 !    call guess_evec(3,n2,n_eig,diagonal,vec)
 !
-!   call the traditional solver:
+!!   call the traditional solver:
 !
 !    write(6,*) ' traditional implementation'
 !    write(6,*)
 !    call caslr_std(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
 !                      spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
-
-!   write the converged results on file for comparison:
 !
+!!   write the converged results on file for comparison:
+!!
 !    open (unit = 20, file = 'caslr_std.txt', status = 'replace', form = 'formatted', access = 'sequential')
 !    do i = 1, n2
 !      write(20,'(10f12.6)') vec(i,:)
@@ -918,7 +918,7 @@ end program main
 !
 !   make a guess for the solution vector (see guess_evec for more information)
 !
-    call guess_evec(1,n2,n_eig,diagonal,vec)
+    call guess_evec(3,n2,n_eig,diagonal,vec)
 !
 !   call the modified solver:
 !
@@ -1134,8 +1134,8 @@ end program main
     call random_seed(size=n_seed)
     allocate (iseed(n_seed))
     iseed = 1
-!    call system_clock(t)
-!    iseed = t + (/(k, k = 0, n_seed-1)/)
+    call system_clock(t)
+    iseed = t + (/(k, k = 0, n_seed-1)/)
     call random_seed(put=iseed)
     deallocate (iseed)
 !
