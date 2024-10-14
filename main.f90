@@ -12,7 +12,7 @@ program main
 ! initialize:
 !
   n      = 1000 
-  n_want = 3  
+  n_want = 10  
   tol    = 1.0e-10_dp
   itmax  = 1000
   m_max  = 10
@@ -731,7 +731,7 @@ end program main
   subroutine test_caslr_std(check_lapack,n,n_want,tol,itmax,m_max)
     use real_precision
     use utils
-    use diaglib, only : caslr_std, caslr_eff_std, prt_generic
+    use diaglib, only : caslr_std_driver, caslr_eff_std_driver, prt_generic
     implicit none
     logical,  intent(in) :: check_lapack
     integer,  intent(in) :: n, n_want, itmax, m_max
@@ -903,7 +903,7 @@ end program main
 
     write(6,*) ' traditional implementation'
     write(6,*)
-    call caslr_std(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
+    call caslr_std_driver(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
                       spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
 
 !   write the converged results on file for comparison:
@@ -923,7 +923,7 @@ end program main
 !
     write(6,*) ' new implementation'
     write(6,*)
-    call caslr_eff_std(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
+    call caslr_eff_std_driver(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
                           spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
 !
 !   write the converged results on file for comparison:
