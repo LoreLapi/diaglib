@@ -38,8 +38,7 @@ program main
               t3,'   4 for linear-response equations (CASSCF-like).',/, &
               t3,'   5 for standard-response equations (CASSCF-like).')
   write(6,1000)
-!  read(5,*) iwhat
-  iwhat = 5
+  read(5,*) iwhat
   write(6,*)
 !
   if (iwhat.eq.1) then 
@@ -898,27 +897,27 @@ end program main
 !   make a guess for the solution vector (see guess_evec for more information)
 !
     vec = 0.0d0
-!    call guess_evec(3,n2,n_eig,diagonal,vec)
+    call guess_evec(3,n2,n_eig,diagonal,vec)
+
+!   call the traditional solver:
+
+    write(6,*) ' traditional implementation'
+    write(6,*)
+    call caslr_std(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
+                      spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
+
+!   write the converged results on file for comparison:
 !
-!!   call the traditional solver:
-!
-!    write(6,*) ' traditional implementation'
-!    write(6,*)
-!    call caslr_std(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
-!                      spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
-!
-!!   write the converged results on file for comparison:
-!!
-!    open (unit = 20, file = 'caslr_std.txt', status = 'replace', form = 'formatted', access = 'sequential')
-!    do i = 1, n2
-!      write(20,'(10f12.6)') vec(i,:)
-!      write(20,*)
-!    end do
-!    close (20)
+    open (unit = 20, file = 'caslr_std.txt', status = 'replace', form = 'formatted', access = 'sequential')
+    do i = 1, n2
+      write(20,'(10f12.6)') vec(i,:)
+      write(20,*)
+    end do
+    close (20)
 !
 !   make a guess for the solution vector (see guess_evec for more information)
 !
-    call guess_evec(3,n2,n_eig,diagonal,vec)
+    call guess_evec(2,n2,n_eig,diagonal,vec)
 !
 !   call the modified solver:
 !
