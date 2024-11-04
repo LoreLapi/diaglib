@@ -13,7 +13,7 @@ program main
 !
   n      = 1000 
   n_want = 10  
-  tol    = 1.0e-10_dp
+  tol    = 1.0e-11_dp
   itmax  = 1000
   m_max  = 10
   nmult  = 0
@@ -47,9 +47,11 @@ program main
     call test_geneig(.true.,n,n_want,tol,itmax,m_max)
   else if (iwhat.eq.3) then 
     call test_scflr(.true.,n,n_want,tol,itmax,m_max)
-  else if (iwhat.eq.4) then 
+  else if (iwhat.eq.4) then
+    write(6,*) 'Be careful! n_want should be a multiple of 3 (3 coordinates per gradient after all)' 
     call test_caslr(.false.,n,n_want,tol,itmax,m_max)
   else if (iwhat.eq.5) then
+    write(6,*) 'Be careful! n_want should be a multiple of 3 (3 coordinates per gradient after all)' 
     call test_caslr_std(.true.,n,n_want,tol,itmax,m_max)  
   else 
     write(6,*) ' invalid selection. aborting ...'
@@ -741,9 +743,10 @@ end program main
 !   in casscf linear response theory, and then uses lapack and iterative routines to
 !   solve it.
 !
-    logical               :: ok, imag, verbose
+    logical               :: ok, verbose, imag_old
+    logical, allocatable  :: imag(:)
     integer               :: i, j, info
-    integer               :: n2, n_eig
+    integer               :: n2 
     real(dp), allocatable :: ipiv(:) 
     real(dp)              :: omega
     real(dp)              :: sqrttwo, lw(1)
@@ -759,8 +762,11 @@ end program main
 !
 !   set a couple of logicals
 !
+    allocate(imag(n_want))
     verbose = .true.
-    imag    = .true.
+    imag_old = .false.
+    imag(1:n_want/2) = .true.
+    imag(n_want/2+1:n_want) = .false.
 !
 !   Initialize seeds with current time
     call random_seed(size = n_seed)
@@ -821,16 +827,18 @@ end program main
 ! 
 !   make a distinction between a real and an imaginary perturbation for the costrunction of the gradient vector
 !
-    if (imag) then
-      call random_number(g(1:n,:))
-      g(n+1:n2,:) = -g(1:n,:) 
-    else
-      call random_number(g(1:n,:))
-      g(n+1:n2,:) = g(1:n,:)
-    end if
+    call random_number(g(1:n,:))
+    do i = 1, n_want
+      if (imag(i)) then
+         g(n+1:n2,i) = -g(1:n,i) 
+      else
+         g(n+1:n2,i) = g(1:n,i) 
+      end if
+    end do  
     g_half(1:n,:) = g(1:n,:)
 !
 !   allocate space for dgesv
+!
     if (check_lapack) then
 !
 !     build the complete matrices:
@@ -885,26 +893,21 @@ end program main
       diagonal(i) = aa(i,i) - sigma(i,i)
     end do
 !
-!   for better convergence, we seek more eigenpairs and stop the iterations when the
-!   required ones are converged.
-!
-    n_eig = n_want
-!
 !   allocate memory for the solution vectors:
 !
-    allocate (vec(n2,n_eig))
+    allocate (vec(n2,n_want))
 !
 !   make a guess for the solution vector (see guess_evec for more information)
 !
     vec = 0.0d0
-    call guess_evec(3,n2,n_eig,diagonal,vec)
+    call guess_evec(3,n2,n_want,diagonal,vec)
 
 !   call the traditional solver:
 
     write(6,*) ' traditional implementation'
     write(6,*)
-    call caslr_std_driver(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
-                      spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
+    call caslr_std_driver(verbose,n,n2,n_want,itmax,tol,m_max,apbvec,ambvec, &
+                      spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag_old)
 
 !   write the converged results on file for comparison:
 !
@@ -917,13 +920,13 @@ end program main
 !
 !   make a guess for the solution vector (see guess_evec for more information)
 !
-    call guess_evec(2,n2,n_eig,diagonal,vec)
+    call guess_evec(2,n2,n_want,diagonal,vec)
 !
 !   call the modified solver:
 !
     write(6,*) ' new implementation'
     write(6,*)
-    call caslr_eff_std_driver(verbose,n,n2,n_want,n_eig,itmax,tol,m_max,apbvec,ambvec, &
+    call caslr_eff_std_driver(verbose,n,n2,n_want,itmax,tol,m_max,apbvec,ambvec, &
                           spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
 !
 !   write the converged results on file for comparison:

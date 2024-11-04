@@ -1499,12 +1499,12 @@ module diaglib
     return
   end subroutine caslr_eff_driver
 !
-  subroutine caslr_std_driver(verbose,n,n2,n_targ,n_max,max_iter,tol,max_dav, &
+  subroutine caslr_std_driver(verbose,n,n2,n_max,max_iter,tol,max_dav, &
                        apbmul,ambmul,spdmul,smdmul,lrprec,vec,ok,omega, &
                        g_half,imag)
     implicit none
     logical,                       intent(in)    :: verbose, imag
-    integer,                       intent(in)    :: n, n2, n_targ, n_max
+    integer,                       intent(in)    :: n, n2, n_max
     integer,                       intent(in)    :: max_iter, max_dav
     real(dp),                      intent(in)    :: omega 
     real(dp),                      intent(in)    :: tol
@@ -1774,7 +1774,7 @@ module diaglib
         rp = rp - g_half
       end if
 !
-      do i_eig = 1, n_targ
+      do i_eig = 1, n_max
         if (done(i_eig)) cycle
 !
         call daxpy(n,-omega,bp(:,i_eig),1,rp(:,i_eig),1)
@@ -1786,7 +1786,7 @@ module diaglib
 ! check convergence. lock the first contiguous converged eigenvalues
 !     by setting the logical array "done" to true.
 !
-      do i_eig = 1, n_targ
+      do i_eig = 1, n_max
         if (done(i_eig)) cycle
         done(i_eig)     = r_norm(1,i_eig).lt.tol_rms .and. &
                           r_norm(2,i_eig).lt.tol_max .and. &
@@ -1800,13 +1800,13 @@ module diaglib
 !     print some information:
 !
       if (verbose) then
-        do i_eig = 1, n_targ
+        do i_eig = 1, n_max
           write(6,1040) it, i_eig, r_norm(:,i_eig), done(i_eig)
         end do
         write(6,*) 
       end if
 !
-      if (all(done(1:n_targ))) then
+      if (all(done(1:n_max))) then
         ok = .true.
         exit
       end if
@@ -1826,7 +1826,7 @@ module diaglib
         i_beg = i_beg + n_act
         n_act = n_max
         n_frozen = 0
-        do i_eig = 1, n_targ
+        do i_eig = 1, n_max
           if (done(i_eig)) then
             n_act = n_act - 1
             n_frozen = n_frozen + 1
@@ -1887,7 +1887,7 @@ module diaglib
         gpm    = zero
 !
       end if
-      if (verbose) write(6,1050) n_targ, n_act, n_frozen
+      if (verbose) write(6,1050) n_max, n_act, n_frozen
     end do
 !
     call get_time(t1)
@@ -1910,7 +1910,7 @@ module diaglib
     return
   end subroutine caslr_std_driver
 !
-  subroutine caslr_eff_std_driver(verbose,n,n2,n_targ,n_max,max_iter,tol,max_dav, &
+  subroutine caslr_eff_std_driver(verbose,n,n2,n_max,max_iter,tol,max_dav, &
                            apbmul,ambmul,spdmul,smdmul,lrprec,vec,ok,omega,g_half,imag)
 !
 !   Main driver for the efficient solution to the following standard response equation:
@@ -1948,18 +1948,22 @@ module diaglib
 !   verbose:  logical, whether to print various information at each 
 !             iteration (eigenvalues, residuals...).
 !
-!   imag:     logical, true if the perturbation is imaginary.
+!   imag:     array of logicals, which are set to true if the 
+!             corresponding perturbation is imaginary 
+!             (i.e. magnetic field), to false if it is real.
 !
 !   n:        integer, size of the A, B, S, D matrices
 !
 !   n2:       integer, n2 = 2*n, size of the generalized eigenvalue
 !             problem.
 !
-!   n_targ:   integer, number of required solutions.
-!
 !   n_max:    integer, maximum size of the search space. It should be 
-!             >= n_targ. 
-!   
+!  
+!   n_imag:   integer, number of logicals needed to determine whether
+!             the right hand sides' columns correspond to imaginary or
+!             real perturbations; it's equal to the total number of 
+!             gradients.
+!
 !   max_iter: integer, maximum allowed number of iterations.
 !
 !   max_dav:  integer, maximum allowed number of iterations before a
@@ -1994,9 +1998,10 @@ module diaglib
 !   ok:      logical, true if caslr_eff_std converged.
 !
     implicit none
-    logical, intent(in)                          :: verbose, imag
-    integer,                       intent(in)    :: n, n2, n_targ, n_max
+    integer,                       intent(in)    :: n, n2, n_max 
     integer,                       intent(in)    :: max_iter, max_dav
+    logical, intent(in)                          :: verbose
+    logical, dimension(n_max),     intent(in)    :: imag
     real(dp),                      intent(in)    :: omega
     real(dp),                      intent(in)    :: tol
     real(dp), dimension(n,n_max),  intent(in)    :: g_half
@@ -2083,7 +2088,7 @@ module diaglib
 !   restart: logical, gives Davidson' routine a restart order. It's set to
 !            true when m_dim is equal to m_max.
 !
-!   cnt: integer, used to count every time the program enters a 
+!   i,cnt: integers, used to count every time the program enters a 
 !        particular loop.
 !
     integer, parameter    :: min_dav = 10
@@ -2102,7 +2107,7 @@ module diaglib
     real(dp), allocatable :: gp(:,:), gm(:,:)
     real(dp), allocatable :: s_up(:,:), s_gm(:,:)
     logical               :: restart
-    integer               :: cnt
+    integer               :: i, cnt, col, n_act_im, n_act_re 
     integer, allocatable  :: map_frozen(:) 
 !
 !   External functions:
@@ -2264,22 +2269,36 @@ module diaglib
 !     Because of the symmetry of g and whether the perturbation is complex 
 !     or real, discriminate between gp = 0 or gm = 0, respectively.
 !
-      gp = zero
-      gm = zero
-      cnt = 0
-      if (imag) then
-        do i_std = 1, n_max
-          if (done(i_std)) cycle
-          cnt = cnt + 1
-          call dgemv('t',n,ldu,one,vm,n,g_half(:,i_std),1,zero,gm(:,cnt),1)
+      gp       = zero
+      gm       = zero
+      n_act_im = 0
+      n_act_re = 0
+       do i_std = 1, n_max 
+          if (imag(i_std)) then
+            if (done(i_std)) cycle
+            n_act_im = n_act_im + 1
+            call dgemv('t',n,ldu,one,vm,n,g_half(:,i_std),1,zero,gm(:,n_act_im),1)
+          else
+            if (done(i_std)) cycle
+            n_act_re = n_act_re + 1   
+            call dgemv('t',n,ldu,one,vp,n,g_half(:,i_std),1,zero,gp(:,n_act_re),1)
+          end if
         end do
-      else
-        do i_std = 1, n_max
-          if (done(i_std)) cycle
-          cnt = cnt + 1
-          call dgemv('t',n,ldu,one,vp,n,g_half(:,i_std),1,zero,gp(:,cnt),1)
-        end do
-      end if
+!
+!     Assemble w*s^t gm + gp = s_gm.
+!
+      s_gm = zero
+      if (n_act_im .gt. 0) then
+        call dgemm('t','n',ldu,n_act_im,ldu,omega,smat,lda,gm,lda,zero,s_gm,lda)
+      endif      
+      if (n_act_re .gt. 0 .and. n_act_im .eq. 0) then
+        col = 1
+        s_gm(:,col:col+n_act-1) =  gp(:,:n_act)
+      else if (n_act_re .gt. 0 .and. n_act_im .gt. 0) then
+        col  = n_act_im + 1
+        call dgemm('t','n',ldu,n_act,ldu,omega,smat,lda,gm,lda,zero,s_gm,lda)
+        s_gm(:,col:col+n_act_re-1) = s_gm(:,col:col+n_act_re-1) + gp(:,:n_act_im)  
+      endif
 !      
 !     Assemble Id - (w^2)s^t s = ss_mat.
 !
@@ -2289,17 +2308,9 @@ module diaglib
         ss_mat(i_std,i_std) = ss_mat(i_std,i_std) + 1.d0
       end do
 !
-!     Assemble w*s^t gm + gp = s_gm.
-!
-      s_gm = zero
-      if (imag) then
-      call dgemm('t','n',ldu,n_act,ldu,omega,smat,lda,gm,lda,zero,s_gm,lda)
-      end if
-      s_gm(:,1:n_act) = s_gm(:,1:n_act) + gp(:,1:n_act)
-!
 !     Solve the reduced linear system: up = (1 - w^2 s^t s)^(-1) * (gp + w s^t gm).
 !     The routine dgesv collects the solutions, the up coefficients, in s_gm.
-!
+!!
       call get_time(t1)
       call dgesv(ldu,n_act,ss_mat,lda,ipiv,s_gm,lda,info)
       call get_time(t2)
@@ -2313,10 +2324,10 @@ module diaglib
 !     Build um = w*s_up + gm.
 !
       um = zero
-      !do i_std = 1, n_act
-      !  um(:,i_std) = gm(:,i_std) + (omega * s_up(:,i_std))
-      um = gm + (omega * s_up)   !TODO check later for bugs
-      !end do
+      um = omega * s_up
+      if (n_act_im .gt. 0) then
+        um = um + gm
+      endif
 !
 !     Assemble the symmetric (vecp) and antysimmetric (vecm) vectors 
 !     as (vp)s_gm and (vm)um, respectively: the solution vectors are
@@ -2344,10 +2355,6 @@ module diaglib
       do i_std = 1, n_max
         if (done(i_std)) cycle
         cnt = cnt + 1
-        !call dgemv('n',n,ldu,one,lvp,n,s_gm(:,cnt),1,zero,rp(:,i_std),1)  !TODO make these to dgemm
-        !call dgemv('n',n,ldu,one,lvm,n,um(:,cnt),1,zero,rm(:,i_std),1)
-        !call dgemv('n',n,ldu,one,bvp,n,um(:,cnt),1,zero,bp(:,i_std),1)
-        !call dgemv('n',n,ldu,one,bvm,n,s_gm(:,cnt),1,zero,bm(:,i_std),1)
         map_frozen(cnt) = i_std
       end do
       call dgemm('n','n',n,n_act,ldu,one,lvp,n,s_gm,lda,zero,rp,n)
@@ -2359,21 +2366,14 @@ module diaglib
 !     If complex, rm contains the contribution of the gradient. Else, it is rp that 
 !     depends on the gradient.
 ! 
-      if (imag) then
-        do i_std = 1, n_act 
-          !if (done(i_std)) cycle
-          !rm(:,i_std) = rm(:,i_std) - g_half(:,i_std)
-          rm(:,i_std) = rm(:,i_std) - g_half(:,map_frozen(i_std))
-        end do
-      else
-        do i_std = 1, n_act
-          !if (done(i_std)) cycle
-          !rp(:,i_std) = rp(:,i_std) - g_half(:,i_std)
-          rp(:,i_std) = rp(:,i_std) - g_half(:,map_frozen(i_std))
-          end do
-      end if
+      do i_std = 1, n_act_im 
+        rm(:,i_std) = rm(:,i_std) - g_half(:,map_frozen(i_std))
+      enddo
+      do i_std = col, col + n_act_re - 1
+        rp(:,i_std) = rp(:,i_std) - g_half(:,map_frozen(i_std))
+      enddo
 !     
-!     Complete the construction of the residuals. If some vectors have already converged,
+!     Complete the construction of the residuals. If some vectors are already converged,
 !     the corresponding residual won't be built. The corresponding dnrm norm and max norm
 !     are also computed.
 !
