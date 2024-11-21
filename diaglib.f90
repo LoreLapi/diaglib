@@ -2297,7 +2297,7 @@ module diaglib
       else if (n_act_re .gt. 0 .and. n_act_im .gt. 0) then
         col  = n_act_im + 1
         call dgemm('t','n',ldu,n_act,ldu,omega,smat,lda,gm,lda,zero,s_gm,lda)
-        s_gm(:,col:col+n_act_re-1) = s_gm(:,col:col+n_act_re-1) + gp(:,:n_act_im)  
+        s_gm(:,col:col+n_act_re-1) = s_gm(:,col:col+n_act_re-1) + gp(:,:n_act_re)  
       endif
 !      
 !     Assemble Id - (w^2)s^t s = ss_mat.
