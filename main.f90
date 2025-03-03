@@ -11,11 +11,11 @@ program main
 !
 ! initialize:
 !
-  n      = 1000 
-  n_want = 10  
-  tol    = 1.0e-11_dp
+  n      = 1000
+  n_want = 10
+  tol    = 1.0e-6_dp
   itmax  = 1000
-  m_max  = 10
+  m_max  = 20
   nmult  = 0
   tdscf  = .false.
   i_alg  = 0
@@ -38,8 +38,9 @@ program main
               t3,'   4 for linear-response equations (CASSCF-like).',/, &
               t3,'   5 for standard-response equations (CASSCF-like).')
   write(6,1000)
-  read(5,*) iwhat
+!  read(5,*) iwhat
   write(6,*)
+  iwhat = 5
 !
   if (iwhat.eq.1) then 
     call test_symm(.true.,n,n_want,tol,itmax,m_max)
@@ -171,7 +172,7 @@ end program main
   subroutine ambvec(n,m,x,y)
     use utils
     implicit none
-    integer,                  intent(in)    :: n, m
+    integer,                 intent(in)    :: n, m
     real(dp), dimension(n,m), intent(in)    :: x
     real(dp), dimension(n,m), intent(inout) :: y
 !
@@ -734,14 +735,15 @@ end program main
     use real_precision
     use utils
     use diaglib, only : caslr_std_driver, caslr_eff_std_driver, prt_generic
-    implicit none
-    logical,  intent(in) :: check_lapack
-    integer,  intent(in) :: n, n_want, itmax, m_max
-    real(dp), intent(in) :: tol
 !
 !   this subroutine builds a set of linear equations for a real symmetric matrix,  such as the one encountered
 !   in casscf linear response theory, and then uses lapack and iterative routines to
 !   solve it.
+!
+    implicit none
+    logical,  intent(in) :: check_lapack
+    integer,  intent(in) :: n, n_want, itmax, m_max
+    real(dp), intent(in) :: tol
 !
     logical               :: ok, verbose, imag_old
     logical, allocatable  :: imag(:)
@@ -765,15 +767,15 @@ end program main
     allocate(imag(n_want))
     verbose = .true.
     imag_old = .false.
-    imag(1:n_want/2) = .true.
+    imag(1:n_want/2) = .false.
     imag(n_want/2+1:n_want) = .false.
 !
 !   Initialize seeds with current time
     call random_seed(size = n_seed)
     allocate(iseed(n_seed))
-    call system_clock(t)
-    iseed = t + (/(k, k = 0, n_seed-1)/)
-!    iseed = 10   
+!    call system_clock(t)
+!    iseed = t + (/(k, k = 0, n_seed-1)/)
+    iseed = 10   
     call random_seed(put = iseed)
     deallocate(iseed)
 !
@@ -783,7 +785,7 @@ end program main
 !
 !   enter the value of omega
 !
-    omega = 0.1_dp
+    omega = 0.0774_dp
 !
 !   allocate memory for the a, b, apb, amb, sigma, delta, spd, smd and  g matrices:
 !
@@ -806,15 +808,19 @@ end program main
         apb(i,j) = apb(j,i)
       end do 
     end do
+    call random_number(sigma)
+    sigma = sigma - 0.5_dp
     delta = matmul(transpose(sigma),sigma)
+    print *, norm2(sigma)
     sigma = delta
     do i = 1, n
-      sigma(i,i) = sigma(i,i) + 1.0_dp
+      sigma(i,i) = sigma(i,i) + 50.0_dp
     end do
 !  
 !   build antisymmetric delta:
 !  
     call random_number(delta)
+    delta = delta -0.5_dp
     delta = delta - transpose(delta)
 !
     aa = 0.5_dp * (apb + amb)
@@ -839,49 +845,49 @@ end program main
 !
 !   allocate space for dgesv
 !
-    if (check_lapack) then
+!   if (check_lapack) then
 !
-!     build the complete matrices:
+!   build the complete matrices:
 !    
-      allocate (a(n2,n2), s(n2,n2))
+!   allocate (a(n2,n2), s(n2,n2))
 !
-      a(1:n,   1:n)    =    aa
-      a(n+1:n2,n+1:n2) =    aa
-      a(1:n,   n+1:n2) =    bb
-      a(n+1:n2,1:n)    =    bb
-      s(1:n,   1:n)    =   sigma
-      s(n+1:n2,n+1:n2) = - sigma
-      s(1:n,   n+1:n2) =   delta
-      s(n+1:n2,1:n)    = - delta
+!   a(1:n,   1:n)    =    aa
+!   a(n+1:n2,n+1:n2) =    aa
+!   a(1:n,   n+1:n2) =    bb
+!   a(n+1:n2,1:n)    =    bb
+!   s(1:n,   1:n)    =   sigma
+!   s(n+1:n2,n+1:n2) = - sigma
+!   s(1:n,   n+1:n2) =   delta
+!   s(n+1:n2,1:n)    = - delta
 !
 !   multiply directly omega to s
 !
-    s = omega * s
+!   s = omega * s
 !
 !   compute a-s
 !
-    a = a - s
+!   a = a - s
 !
-    allocate(ipiv(n2))
+!   allocate(ipiv(n2))
 !    
 !   solve the linear response equation system using a dense linear algebra routine 
 !
-    call dgesv(n2,n_want,a,n2,ipiv,g,n2,info)
-    deallocate(ipiv)
+!   call dgesv(n2,n_want,a,n2,ipiv,g,n2,info)
+!   deallocate(ipiv)
 !
 !   verify the result
 ! 
-    open (unit = 10, file = 'test_caslr_std.txt', form = 'formatted', access = 'sequential')
-    do i = 1, n2
-      write(10,'(10f12.6)') g(i,:)
-      write(10,*)
-    end do
-    close (10)
+!   open (unit = 10, file = 'test_caslr_std.txt', form = 'formatted', access = 'sequential')
+!   do i = 1, n2
+!     write(10,'(10f12.6)') g(i,:)
+!     write(10,*)
+!   end do
+!   close (10)
 !
-!     free the memory:
-      deallocate(a,s)
-    end if
-      deallocate (g)
+!   free the memory:
+!   deallocate(a,s)
+!   end if
+    deallocate(g)
 !
 !   allocate space for the diagonal:
 !
@@ -896,34 +902,44 @@ end program main
 !   allocate memory for the solution vectors:
 !
     allocate (vec(n2,n_want))
-!
-!   make a guess for the solution vector (see guess_evec for more information)
-!
+!!
+!!   make a guess for the solution vector (see guess_evec for more information)
+!!
     vec = 0.0d0
-    call guess_evec(3,n2,n_want,diagonal,vec)
-
+    call guess_evec(2,n2,n_want,diagonal,vec)
+!
 !   call the traditional solver:
-
+!
     write(6,*) ' traditional implementation'
     write(6,*)
     call caslr_std_driver(verbose,n,n2,n_want,itmax,tol,m_max,apbvec,ambvec, &
-                      spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag_old)
-
+                      spdvec,smdvec,lrprec_1,vec,ok,omega,g_half,imag)
+!
 !   write the converged results on file for comparison:
 !
-    open (unit = 20, file = 'caslr_std.txt', status = 'replace', form = 'formatted', access = 'sequential')
-    do i = 1, n2
-      write(20,'(10f12.6)') vec(i,:)
-      write(20,*)
-    end do
-    close (20)
+!    open (unit = 20, file = 'caslr_std.txt', status = 'replace', form = 'formatted', access = 'sequential')
+!    do i = 1, n2
+!      write(20,'(10f12.6)') vec(i,:)
+!      write(20,*)
+!    end do
+!    close (20)
 !
 !   make a guess for the solution vector (see guess_evec for more information)
 !
-    call guess_evec(2,n2,n_want,diagonal,vec)
+!    vec = 0.0d0
+!    call guess_evec(2,n2,n_want,diagonal,vec)
+!!
+!!   Temporary test: solve the equations as Dalton does
+!!
+!    do i = 1, n_want
+!    call caslr_eff_std_driver(verbose,n,n2,1,itmax,tol,m_max,apbvec,ambvec, &
+!                          spdvec,smdvec,lrprec_1,vec(:,i),ok,omega,g_half(:,i),imag(i))
+!    end do
 !
 !   call the modified solver:
 !
+    vec = 0.0d0
+    call guess_evec(2,n2,n_want,diagonal,vec)
     write(6,*) ' new implementation'
     write(6,*)
     call caslr_eff_std_driver(verbose,n,n2,n_want,itmax,tol,m_max,apbvec,ambvec, &
@@ -931,13 +947,14 @@ end program main
 !
 !   write the converged results on file for comparison:
 !
-    open (unit = 70, file = 'caslr_eff_std.txt', form = 'formatted', access = 'sequential')
-    do i = 1, n2
-      write(70,'(10f12.6)')  vec(i,:)
-      write(70,*)
-    end do
-    close (70)
-    return
+!    open (unit = 70, file = 'caslr_eff_std.txt', form = 'formatted', access = 'sequential')
+!    do i = 1, n2
+!      write(70,'(10f12.6)')  vec(i,:)
+!      write(70,*)
+!    end do
+!    close (70)
+!    return
+    deallocate(diagonal,vec)
   end subroutine test_caslr_std
 !  
   subroutine test_scflr(check_lapack,n,n_want,tol,itmax,m_max)
@@ -1129,7 +1146,7 @@ end program main
 !
     integer              :: i, ipos, n_seed, k, t
     integer, allocatable :: iseed(:)
-    logical, allocatable :: mask(:)
+    logical, allocatable :: mask_p(:)
 !
 !   initialize a random number generator in a predictible way.
 !
@@ -1141,28 +1158,35 @@ end program main
     call random_seed(put=iseed)
     deallocate (iseed)
 !
+!   Fixing
+!
+    if (m > n) then
+      print *, "Error: m must not exceed n. m =", m, "n =", n
+      stop
+    endif
+!
     evec = 0.0_dp
 !
-    allocate (mask(n))
+    allocate (mask_p(n))
 !
     if (iwhat.eq.1) then
 !
 !     get the minimum element of the diagonal
 !
-      mask = .true.
+      mask_p = .true.
       do i = 1, m
-        ipos = minloc(diagonal,dim=1,mask=mask)
-        mask(ipos) = .false.   
+        ipos = minloc(diagonal,dim=1,mask=mask_p)
+        mask_p(ipos) = .false.   
         evec(ipos,i) = 1.0d0
       enddo
     else if (iwhat.eq.2) then
 !
 !     get the maximum element of the diagonal
 !
-      mask = .true.
+      mask_p = .true.
       do i = 1, m
-        ipos = maxloc(diagonal,dim=1,mask=mask)
-        mask(ipos) = .false.   
+        ipos = maxloc(diagonal,dim=1,mask=mask_p)
+        mask_p(ipos) = .false.   
         evec(ipos,i) = 1.0d0
       enddo
     else if (iwhat.eq.3) then
@@ -1183,10 +1207,10 @@ end program main
 !
 !     get the maximum element of the diagonal
 !
-      mask = .true.
+      mask_p = .true.
       do i = 1, m
-        ipos = maxloc(diagonal,dim=1,mask=mask)
-        mask(ipos) = .false.   
+        ipos = maxloc(diagonal,dim=1,mask=mask_p)
+        mask_p(ipos) = .false.   
         evec(ipos,i) = evec(ipos,i) + 1.0d0
       enddo
 
@@ -1197,12 +1221,14 @@ end program main
 !
 !     get the minimum element of the diagonal
 !
-      mask = .true.
+      mask_p = .true.
       do i = 1, m
-        ipos = minloc(diagonal,dim=1,mask=mask)
-        mask(ipos) = .false.   
+        ipos = minloc(diagonal,dim=1,mask=mask_p)
+        mask_p(ipos) = .false.   
         evec(ipos,i) = evec(ipos,i) + 1.0d0
       enddo
     end if
+    deallocate(mask_p)
     return
   end subroutine guess_evec
+ !

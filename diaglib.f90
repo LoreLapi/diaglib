@@ -1503,8 +1503,9 @@ module diaglib
                        apbmul,ambmul,spdmul,smdmul,lrprec,vec,ok,omega, &
                        g_half,imag)
     implicit none
-    logical,                       intent(in)    :: verbose, imag
+    logical,                       intent(in)    :: verbose
     integer,                       intent(in)    :: n, n2, n_max
+    logical, dimension(n_max),     intent(in)    :: imag
     integer,                       intent(in)    :: max_iter, max_dav
     real(dp),                      intent(in)    :: omega 
     real(dp),                      intent(in)    :: tol
@@ -1513,6 +1514,7 @@ module diaglib
     logical,                       intent(inout) :: ok
     external                                     :: apbmul, ambmul, spdmul, smdmul, &
                                                     lrprec
+    integer, allocatable    :: map_frozen(:) 
 !
 !   local variables:
 !   ================
@@ -1526,7 +1528,7 @@ module diaglib
 !
 !   number of active vectors at a given iteration, and indices to access them
 !
-    integer               :: n_act, ind, i_beg
+    integer               :: n_act, n_act_re, n_act_im, i_beg, n_p, n_m
 !
 !   current size and total dimension of the expansion space
 !
@@ -1536,7 +1538,7 @@ module diaglib
 !
     integer               :: n_frozen
 !
-    integer               :: i, j, k, it, i_eig
+    integer               :: i, j, k, it, i_std, cnt, col 
 !
 !
     real(dp)              :: sqrtn, tol_rms, tol_max, growth
@@ -1549,7 +1551,7 @@ module diaglib
 !   expansion spaces, residuals and their norms:
 !
     real(dp), allocatable :: vp(:,:), vm(:,:), lvp(:,:), lvm(:,:), bvp(:,:), bvm(:,:)
-    real(dp), allocatable :: rp(:,:), rm(:,:), rr(:,:), r_norm(:,:)
+    real(dp), allocatable :: rp(:,:), rm(:,:), r_norm(:,:)
 !
 !   solution vectors of the reduced problem and components of the ritz vectors:
 !
@@ -1577,7 +1579,7 @@ module diaglib
 !
     integer               :: info
     real(dp), allocatable :: ipiv(:)
-    real(dp)              :: orto
+!
 !   compute the actual size of the expansion space, checking that
 !   the input makes sense.
 !   no expansion space smaller than max_dav = 10 is deemed acceptable.
@@ -1595,7 +1597,7 @@ module diaglib
 !   matrix-multiplied vectors and the residual:
 !
     allocate (vp(n,lda), vm(n,lda), lvp(n,lda), lvm(n,lda), bvp(n,lda), bvm(n,lda), &
-              rp(n,n_max), rm(n,n_max), rr(n,n_max), stat = istat)
+              rp(n,n_max), rm(n,n_max), stat = istat)
 !
 !   allocate memory for the reduced arrays:
     allocate (gp(lda,n_max), gm(lda,n_max), gpm(lda2,n_max), m_red(lda2,lda2), &
@@ -1605,7 +1607,7 @@ module diaglib
 !
 !   allocate memory for convergence check
 !
-    allocate (done(n_max), r_norm(2,n_max), stat=istat)
+    allocate (done(n_max), r_norm(2,n_max), map_frozen(n_max), stat=istat)
     call check_mem(istat)
 !
 !   allocate memory for the plus and minus vector components:
@@ -1638,9 +1640,9 @@ module diaglib
 !
 !   move the guess into the expansion space.
 !
-    do i_eig = 1, n_max
-      vp(:,i_eig) = vec(1:n,i_eig) + vec(n+1:n2,i_eig)
-      vm(:,i_eig) = vec(1:n,i_eig) - vec(n+1:n2,i_eig)
+    do i_std = 1, n_max
+      vp(:,i_std) = vec(1:n,i_std) + vec(n+1:n2,i_std)
+      vm(:,i_std) = vec(1:n,i_std) - vec(n+1:n2,i_std)
     end do
 !
     call get_time(t1)
@@ -1650,13 +1652,14 @@ module diaglib
     t_ortho = t_ortho + t2 - t1
 !
     n_act = n_max
-    ind   = 1
     i_beg = 1
 !
 !   initialize the counter for the expansion of the subspace
 !
     m_dim = 1
     ldu   = 0
+    n_p   = 0
+    n_m   = 0
 !
 !   initialize to false the restart
 !
@@ -1673,7 +1676,6 @@ module diaglib
 !
     if (verbose) write(6,1030) tol
 !
-    n_rst   = 0
     do it = 1, max_iter
 !
 !     update the size of the expansion space.
@@ -1704,11 +1706,19 @@ module diaglib
 !
       gp = zero
       gm = zero
-      if (imag) then
-        call dgemm('t','n',ldu,n_max,n,one,vm,n,g_half,n,zero,gm,lda)
-      else
-        call dgemm('t','n',ldu,n_max,n,one,vp,n,g_half,n,zero,gp,lda)
-      end if
+      n_act_im = 0
+      n_act_re = 0
+       do i_std = 1, n_max 
+          if (imag(i_std)) then
+            if (done(i_std)) cycle
+            n_act_im = n_act_im + 1
+            call dgemv('t',n,ldu,one,vm,n,g_half(:,i_std),1,zero,gm(:,n_act_im),1)
+          else
+            if (done(i_std)) cycle
+            n_act_re = n_act_re + 1   
+            call dgemv('t',n,ldu,one,vp,n,g_half(:,i_std),1,zero,gp(:,n_act_re),1)
+          end if
+      end do
 !
 !     build the 2n-dimensional matrix
 !     
@@ -1728,80 +1738,83 @@ module diaglib
 !     default algorithm: solve the 2n-dimensional linear system.
 !
       call get_time(t1)
-        call dgesv(2*ldu,n_max,m_red,lda2,ipiv,gpm,lda2,info)
+        call dgesv(2*ldu,n_act,m_red,lda2,ipiv,gpm,lda2,info)
       call get_time(t2)
+      t_ls = t_ls + t2 - t1
 !
-!     extract the coefficients by column
+!     extract the coefficients
 !
       up          = zero
       um          = zero
       up(1:ldu,:) = gpm(1:ldu,:)
       um(1:ldu,:) = gpm(ldu+1:2*ldu,:)
 !
-      t_ls = t_ls + t2 - t1
-!
 !     compute the ritz approximation to the solution vectors
-!         
+! 
       vecp = zero
       vecm = zero
-      call dgemm('n','n',n,n_max,ldu,one,vp,n,up,lda,zero,vecp,n)
-      call dgemm('n','n',n,n_max,ldu,one,vm,n,um,lda,zero,vecm,n)
+      call dgemm('n','n',n,n_act,ldu,one,vp,n,up,lda,zero,vecp,n)
+      call dgemm('n','n',n,n_act,ldu,one,vm,n,um,lda,zero,vecm,n)
 !
 !     put the expansion vectors in the expansion subspace
 !
-      vec = zero
-      do i = 1, n_max
-        vec(1:n,i)    = vecp(:,i) + vecm(:,i)
-        vec(n+1:n2,i) = vecp(:,i) - vecm(:,i)
+      cnt = 0
+      do i_std = 1, n_max
+        if (done(i_std)) cycle
+        cnt = cnt + 1
+        vec(1:n,i_std)    = vecp(:,cnt) + vecm(:,cnt)
+        vec(n+1:n2,i_std) = vecp(:,cnt) - vecm(:,cnt)
       end do
 !
 !     compute the residuals, and their rms and sup norms:
 !
-      rp = zero
-      rm = zero
-      bp = zero
-      bm = zero
-      call dgemm('n','n',n,n_max,ldu,one,lvp,n,up,lda,zero,rp,n)
-      call dgemm('n','n',n,n_max,ldu,one,lvm,n,um,lda,zero,rm,n)
-      call dgemm('n','n',n,n_max,ldu,one,bvp,n,um,lda,zero,bp,n)
-      call dgemm('n','n',n,n_max,ldu,one,bvm,n,up,lda,zero,bm,n)
+      cnt = 0
+      map_frozen = 0
+      do i_std = 1, n_max
+        if (done(i_std)) cycle
+        cnt = cnt + 1
+        map_frozen(cnt) = i_std
+      end do
+      call dgemm('n','n',n,n_act,ldu,one,lvp,n,up,lda,zero,rp,n)
+      call dgemm('n','n',n,n_act,ldu,one,lvm,n,um,lda,zero,rm,n)
+      call dgemm('n','n',n,n_act,ldu,one,bvp,n,um,lda,zero,bp,n)
+      call dgemm('n','n',n,n_act,ldu,one,bvm,n,up,lda,zero,bm,n)
 !     
 !     the construction of the residuals is influenced by the type of perturbation
 !
-      if (imag) then
-        rm = rm - g_half
-      else
-        rp = rp - g_half
-      end if
+      do i_std = 1, n_act_im 
+        rm(:,i_std) = rm(:,i_std) - g_half(:,map_frozen(i_std))
+      enddo
+      do i_std = n_act_im + 1, n_act_im + n_act_re
+        rp(:,i_std) = rp(:,i_std) - g_half(:,map_frozen(i_std))
+      enddo
 !
-      do i_eig = 1, n_max
-        if (done(i_eig)) cycle
+!     Complete the construction of the residuals. If some vectors are already converged,
+!     the corresponding residual won't be built. The corresponding dnrm norm and max norm
+!     are also computed.
 !
-        call daxpy(n,-omega,bp(:,i_eig),1,rp(:,i_eig),1)
-        call daxpy(n,-omega,bm(:,i_eig),1,rm(:,i_eig),1)
-        r_norm(1,i_eig) = dnrm2(n,rp(:,i_eig),1)/sqrtn + dnrm2(n,rm(:,i_eig),1)/sqrtn
-        r_norm(2,i_eig) = maxval(abs(rp(:,i_eig))) + maxval(abs(rm(:,i_eig)))
-      end do
+      call daxpy(n_act*n,-omega,bp,1,rp,1)
+      call daxpy(n_act*n,-omega,bm,1,rm,1)
+      do i_std = 1, n_act
+         r_norm(1,map_frozen(i_std)) = (dnrm2(n,rp(:,i_std),1) + dnrm2(n,rm(:,i_std),1))/(sqrt(two)*sqrtn)
+         r_norm(2,map_frozen(i_std)) = (maxval(abs(rp(:,i_std))) + maxval(abs(rm(:,i_std))))/(sqrt(two))
+       end do
 !
 ! check convergence. lock the first contiguous converged eigenvalues
 !     by setting the logical array "done" to true.
 !
-      do i_eig = 1, n_max
-        if (done(i_eig)) cycle
-        done(i_eig)     = r_norm(1,i_eig).lt.tol_rms .and. &
-                          r_norm(2,i_eig).lt.tol_max .and. &
+      do i_std = 1, n_max
+        if (done(i_std)) cycle
+        done(i_std)     = r_norm(1,i_std).lt.tol_rms .and. &
+                          r_norm(2,i_std).lt.tol_max .and. &
                           it.gt.1
-        if (.not.done(i_eig)) then
-          done(i_eig+1:n_max) = .false.
-          exit
-        end if
       end do
 !
 !     print some information:
 !
       if (verbose) then
-        do i_eig = 1, n_max
-          write(6,1040) it, i_eig, r_norm(:,i_eig), done(i_eig)
+        do i_std = 1, n_max
+          write(6,1040) it, i_std, r_norm(:,i_std), done(i_std)
         end do
         write(6,*) 
       end if
@@ -1816,35 +1829,44 @@ module diaglib
 !
       if (m_dim .lt. dim_dav) then
 !
-!       compute the preconditioned residuals using davidson's procedure
-!       note that this is done with a user-supplied subroutine, that can
+        m_dim = m_dim + 1
+        i_beg = i_beg + n_act
+        n_act = n_max 
+!
+!       Update the number of frozen vectors. If there are, n_act is modified, so
+!       that no more operations will include them.
+!
+        n_frozen = 0
+        do i_std = 1, n_max
+          if (done(i_std)) then
+            n_act = n_act - 1
+            n_frozen = n_frozen + 1
+          end if
+        end do
+!        
+!       Compute the preconditioned residuals using Davidson's procedure.
+!       Note that this is done with a user-supplied subroutine, that can
 !       be generalized to experiment with fancy preconditioners that may
 !       be more effective than the diagonal one, as in the original 
 !       algorithm.
 !
-        m_dim = m_dim + 1
-        i_beg = i_beg + n_act
-        n_act = n_max
-        n_frozen = 0
-        do i_eig = 1, n_max
-          if (done(i_eig)) then
-            n_act = n_act - 1
-            n_frozen = n_frozen + 1
-          else
-            exit
-          end if
-        end do
-        ind   = n_max - n_act + 1
-        call lrprec(n,n_act,omega,rp(1,ind),rm(1,ind),vp(1,i_beg),vm(1,i_beg))
+        call lrprec(n,n_act,omega,rp,rm,vp(1,i_beg),vm(1,i_beg))
 !
 !       orthogonalize the new vectors to the existing ones and then
 !       orthonormalize them.
 !
+        n_p = n_act
+        n_m = n_act
         call get_time(t1)
-        call ortho_vs_x(n,ldu,n_act,vp,vp(1,i_beg),xx,xx)
-        call ortho_vs_x(n,ldu,n_act,vm,vm(1,i_beg),xx,xx)
+        call ortho_vs_x(n,ldu,n_p,vp,vp(1,i_beg),xx,xx,dropping=.true.,tol_o=tol)
+        call ortho_vs_x(n,ldu,n_m,vm,vm(1,i_beg),xx,xx,dropping=.true.,tol_o=tol)
         call get_time(t2)
         t_ortho = t_ortho + t2 - t1
+!
+!       Set n_act equal to the smaller of the numbers n_p and n_m, in order
+!       to eventually keep the dimension of the two spaces equal.
+!
+        n_act  = min(n_p,n_m)
       else
         if (verbose) write(6,'(t7,a)') 'Restarting davidson.'
         restart = .true.
@@ -1854,23 +1876,32 @@ module diaglib
         ldu   = 0
         i_beg = 1
         m_dim = 1
-        n_rst = 0
 !
-        n_act = n_max 
+        n_frozen = 0
+        do i_std = 1, n_max
+          if (done(i_std)) then
+            n_act = n_act - 1
+            n_frozen = n_frozen + 1
+          end if
+        end do
+        n_act = n_max - n_frozen
         vp = zero
         vm = zero
 !
 !      put current vectors into the first position of the 
 !       expansion space
 !
-        do i_eig = 1, n_max
-          vp(:,i_eig) = vec(1:n,i_eig) + vec(n+1:n2,i_eig)
-          vm(:,i_eig) = vec(1:n,i_eig) - vec(n+1:n2,i_eig)
+        cnt = 0
+        do i_std = 1, n_max
+          if(done(i_std)) cycle
+          cnt = cnt +1 
+          vp(:,cnt) = vec(1:n,i_std) + vec(n+1:n2,i_std)
+          vm(:,cnt) = vec(1:n,i_std) - vec(n+1:n2,i_std)
         end do
 !
         call get_time(t1)
-        call ortho_cd(n,n_max,vp,growth,ok)
-        call ortho_cd(n,n_max,vm,growth,ok)
+        call ortho_cd(n,n_act,vp,growth,ok)
+        call ortho_cd(n,n_act,vm,growth,ok)
         call get_time(t2)
         t_ortho = t_ortho + t2 - t1
 !
@@ -1899,7 +1930,7 @@ module diaglib
                 t3,'                                 ',24('='),/,  &
                 t3,'  total:                         ',2f12.4)
     if (verbose) write(6,1000) t_mv, t_ortho, t_ls, t_tot
-    deallocate(ipiv,tau,vp,vm,lvp,lvm,bvp,bvm,rp,rm,rr,done,r_norm, &
+    deallocate(ipiv,tau,vp,vm,lvp,lvm,bvp,bvm,rp,rm,done,r_norm, &
                epmat,emmat,smat,up,um,vecp,vecm,bp,bm,gp,gm,gpm,m_red)
 !
 1050 format(t5,'----------------------------------------',/,&
@@ -1999,9 +2030,9 @@ module diaglib
 !
     implicit none
     integer,                       intent(in)    :: n, n2, n_max 
+    logical, dimension(n_max),     intent(in)    :: imag
     integer,                       intent(in)    :: max_iter, max_dav
     logical, intent(in)                          :: verbose
-    logical, dimension(n_max),     intent(in)    :: imag
     real(dp),                      intent(in)    :: omega
     real(dp),                      intent(in)    :: tol
     real(dp), dimension(n,n_max),  intent(in)    :: g_half
@@ -2091,10 +2122,9 @@ module diaglib
 !   i,cnt: integers, used to count every time the program enters a 
 !        particular loop.
 !
-    integer, parameter    :: min_dav = 10
     integer               :: istat
     integer               :: dim_dav, lda, lda2
-    integer               :: n_act, ind, i_beg, n_p, n_m
+    integer               :: n_act, i_beg, n_p, n_m
     integer               :: m_dim, ldu
     integer               :: n_frozen
     integer               :: it, i_std
@@ -2109,12 +2139,13 @@ module diaglib
     logical               :: restart
     integer               :: i, cnt, col, n_act_im, n_act_re 
     integer, allocatable  :: map_frozen(:) 
+    integer, parameter    :: min_dav = 10
 !
 !   External functions:
 !   ===================
 !
     real(dp)              :: dnrm2
-    external              :: dcopy, dnrm2, dgesv, dgetri, dgetrfi, dgemv
+    external              :: dcopy, dnrm2, dgesv, dgemv
 !
 !   External arrays and integers used for Lapacks.
 !   ==============================================
@@ -2219,11 +2250,12 @@ module diaglib
     call b_ortho(n,n_max,vm,lvm)
     call get_time(t2)
     t_ortho = t_ortho + t2 - t1
-!   
+!  
+!   Controlla che sia più efficiente come sopra
+!
 !   Set the number of active vectors to the maximum value.  
 !
     n_act = n_max
-    ind   = 1
     i_beg = 1
 !
 !   Initialize the counter for the expansion of the subspace
@@ -2284,7 +2316,6 @@ module diaglib
             call dgemv('t',n,ldu,one,vp,n,g_half(:,i_std),1,zero,gp(:,n_act_re),1)
           end if
         end do
-!
 !     Assemble w*s^t gm + gp = s_gm.
 !
       s_gm = zero
@@ -2313,13 +2344,13 @@ module diaglib
 !!
       call get_time(t1)
       call dgesv(ldu,n_act,ss_mat,lda,ipiv,s_gm,lda,info)
-      call get_time(t2)
-      t_ls = t_ls + t2 - t1
 !
 !     Assemble (s)s_gm = s_up.
 !
       s_up = zero
       call dgemm('n','n',ldu,n_act,ldu,one,smat,lda,s_gm,lda,zero,s_up,lda)
+      call get_time(t2)
+      t_ls = t_ls + t2 - t1
 !
 !     Build um = w*s_up + gm.
 !
@@ -2454,6 +2485,10 @@ module diaglib
         t_mv = t_mv + t2 - t1
         call get_time(t1)
         call b_ortho(n,n_p,vp(1,i_beg),lvp(1,i_beg))
+        call get_time(t2)
+        t_ortho = t_ortho + t2 - t1
+!        t_ls = t_ls + t2 - t1
+        call get_time(t1)
         call b_ortho_vs_x(n,ldu,n_m,vm,lvm,vm(1,i_beg),dropping=.true.,tol_o=tol)
         call get_time(t2)
         t_ortho = t_ortho + t2 - t1
@@ -2470,6 +2505,7 @@ module diaglib
         call get_time(t1)
         call b_ortho(n,n_act,vm(1,i_beg),lvm(1,i_beg))
         call get_time(t2)
+!        t_ls = t_ls + t2 - t1
         t_ortho = t_ortho + t2 - t1
       else
 !
@@ -3670,7 +3706,7 @@ module diaglib
     return
   end function norm_est
 !
-  subroutine ortho_vs_x(n,m,k,x,u,ax,au)
+  subroutine ortho_vs_x(n,m,k,x,u,ax,au,dropping,tol_o)
     implicit none
 !
 !   given two sets x(n,m) and u(n,k) of vectors, where x 
@@ -3691,9 +3727,12 @@ module diaglib
 !   arguments:
 !   ==========
 !
-    integer,                   intent(in)    :: n, m, k
+    integer,                   intent(in)    :: n, m
+    integer,                   intent(inout) :: k
     real(dp),  dimension(n,m), intent(in)    :: x, ax
     real(dp),  dimension(n,k), intent(inout) :: u, au
+    logical,  optional,        intent(in)    :: dropping
+    real(dp), optional,        intent(in)    :: tol_o
 !
 !   local variables:
 !   ================
@@ -3722,8 +3761,10 @@ module diaglib
 !
 !   start with an initial orthogonalization to improve conditioning.
 !
+    if (.not.present(dropping)) then
       if (.not. useqr) call ortho_cd(n,k,u,growth,ok)
       if (.not. ok .or. useqr) call ortho(n,k,u,au)
+    end if
 !
 !   iteratively orthogonalize u against x, and then orthonormalize u.
 !
@@ -3734,6 +3775,12 @@ module diaglib
 !
       call dgemm('t','n',m,k,n,one,x,n,u,n,zero,xu,m)
       call dgemm('n','n',n,k,m,-one,x,n,xu,m,one,u,n)
+!
+!     perform the vector drop
+!     
+      if (present(dropping)) then
+        call vector_drop(u,n,k,tol_o)  
+      end if
 !
 !     now, orthonormalize u.
 !
@@ -3906,7 +3953,7 @@ module diaglib
     real(dp), dimension(len_u,n_max), intent(inout) :: u_x
     real(dp), dimension(len_u,n_act), intent(inout) :: u_p
 !
-    integer               :: ind_x, off_x, i_eig
+    integer               :: ind_x, off_x, i_eig, ind_n
     real(dp)              :: xx(1)
 !
     off_x = n_max - n_act
@@ -3926,7 +3973,8 @@ module diaglib
 !
 !   orthogonalize:
 !
-    call ortho_vs_x(len_u,n_max,n_act,u_x,u_p,xx,xx)
+    ind_n = n_act
+    call ortho_vs_x(len_u,n_max,ind_n,u_x,u_p,xx,xx)
 !
 !   all done.
 !
